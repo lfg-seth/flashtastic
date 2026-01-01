@@ -1,5 +1,5 @@
 {
-  "last_mode": "RAK4631",
+  "last_mode": "Heltec V3",
   "modes": {
     "RAK4631 Router (UF2 Drive)": {
       "firmware_path": "rak4631.uf2",
@@ -15,7 +15,7 @@
       "lon": "-119.5383"
     },
     "RAK4631": {
-      "firmware_path": "rak4631.uf2",
+      "firmware_path": "C:/Users/Setheth/Documents/GitHub/flashtastic/rak4631.uf2",
       "uf2_drive": "",
       "owner_letters": "RAK",
       "owner_num": "02",
@@ -27,26 +27,26 @@
       "lon": "-115.029682"
     },
     "Heltec V3": {
-      "firmware_path": "C:/Users/Setheth/OneDrive - LFG Automotive/Documents/GitHub/flashtastic/heltecv3.bin",
+      "firmware_path": "C:/Users/Setheth/Documents/GitHub/flashtastic/heltec-v3.bin",
       "uf2_drive": "",
       "owner_letters": "TESTING",
       "owner_num": "01",
       "owner_short_letters": "MT",
       "owner_short_num": "01",
-      "user_owner": "seth smith",
-      "user_owner_short": "SETH",
+      "user_owner": "SNORR UNCONFIGURED",
+      "user_owner_short": "MC70",
       "lat": "37.8651",
       "lon": "-119.5383"
     },
     "Heltec V4": {
-      "firmware_path": "heltec_v4_gps.bin",
+      "firmware_path": "C:/Users/Setheth/Documents/GitHub/flashtastic/heltec-v4.bin",
       "uf2_drive": "",
       "owner_letters": "SNORR TEST",
       "owner_num": "01",
       "owner_short_letters": "MT",
       "owner_short_num": "01",
-      "user_owner": "John Doe",
-      "user_owner_short": "JD",
+      "user_owner": "SNORR UNCONFIGURED",
+      "user_owner_short": "MC70",
       "lat": "37.8651",
       "lon": "-119.5383"
     }
