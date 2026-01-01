@@ -1,5 +1,5 @@
 {
-  "last_mode": "Heltec V3",
+  "last_mode": "RAK4631",
   "modes": {
     "RAK4631 Router (UF2 Drive)": {
       "firmware_path": "rak4631.uf2",
@@ -18,16 +18,16 @@
       "firmware_path": "rak4631.uf2",
       "uf2_drive": "",
       "owner_letters": "SNORR TEST",
-      "owner_num": "01",
+      "owner_num": "02",
       "owner_short_letters": "MT",
-      "owner_short_num": "01",
+      "owner_short_num": "02",
       "lat": "37.8651",
       "lon": "-119.5383"
     },
     "Heltec V3": {
       "firmware_path": "C:/Users/Setheth/OneDrive - LFG Automotive/Documents/GitHub/flashtastic/heltecv3.bin",
       "uf2_drive": "",
-      "owner_letters": "SNORR TEST",
+      "owner_letters": "TESTING",
       "owner_num": "01",
       "owner_short_letters": "MT",
       "owner_short_num": "01",

@@ -169,9 +169,9 @@ class App:
         self.root = root
 
         # Fonts
-        self.touch_font = font.Font(family="Segoe UI", size=18)
-        self.touch_font_bold = font.Font(family="Segoe UI", size=18, weight="bold")
-        self.log_font = font.Font(family="Consolas", size=12)
+        self.touch_font = font.Font(family="Segoe UI", size=32)
+        self.touch_font_bold = font.Font(family="Segoe UI", size=32, weight="bold")
+        self.log_font = font.Font(family="Consolas", size=24)
 
         # Mode button colors
         self.mode_bg_normal = "#2b2b2b"
@@ -489,7 +489,7 @@ class App:
             ["7", "8", "9"],
             ["4", "5", "6"],
             ["1", "2", "3"],
-            ["0", ".", "-"],
+            ["-", "0", "."],
             ["⌫", "CLR", "±"],
         ]
 
@@ -610,9 +610,10 @@ class App:
         ttk.Label(owner_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
         self._register_field(self.touch_entry(owner_row, self.owner_num, width=6)).pack(side="left")
 
-        ttk.Label(self.left, text="Owner Short:", font=self.touch_font).grid(row=r, column=1, sticky="e")
+        r += 1
+        ttk.Label(self.left, text="Owner Short:", font=self.touch_font).grid(row=r, column=0, sticky="e")
         short_row = ttk.Frame(self.left)
-        short_row.grid(row=r, column=2, sticky="w")
+        short_row.grid(row=r, column=1, sticky="w")
         self._register_field(self.touch_entry(short_row, self.owner_short_letters, width=6)).pack(side="left", padx=(0, 10))
         ttk.Label(short_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
         self._register_field(self.touch_entry(short_row, self.owner_short_num, width=6)).pack(side="left")
@@ -624,27 +625,31 @@ class App:
         self.lat_entry = self._register_field(self.touch_entry(self.left, self.lat, width=16))
         self.lat_entry.grid(row=r, column=1, sticky="w", padx=10)
 
+        r += 1
         self.lon_lbl = ttk.Label(self.left, text="Longitude:", font=self.touch_font)
-        self.lon_lbl.grid(row=r, column=1, sticky="e")
+        self.lon_lbl.grid(row=r, column=0, sticky="w")
         self.lon_entry = self._register_field(self.touch_entry(self.left, self.lon, width=16))
-        self.lon_entry.grid(row=r, column=2, sticky="w")
-
+        self.lon_entry.grid(row=r, column=1, sticky="w")
         # Action buttons
         r += 1
         btns = ttk.Frame(self.left)
         btns.grid(row=r, column=0, columnspan=3, sticky="we", pady=(12, 8))
 
-        self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=14)
+        self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=10)
         self.flash_btn.pack(side="left", padx=10, pady=6)
 
-        self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=16)
+        self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=10)
         self.configure_btn.pack(side="left", padx=10, pady=6)
 
-        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=16)
+        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=12)
         self.erase_btn.pack(side="left", padx=10, pady=6)  # will be hidden for RAK in apply_mode
 
-        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=12)
+        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=10)
         self.clear_btn.pack(side="left", padx=10, pady=6)
+
+        self.set_gps_btn = ttk.Button(btns, text="Set GPS", command=self.set_gps, style="Touch.TButton", width=10)
+        self.set_gps_btn.pack(side="left", padx=10, pady=6)
+    
 
         # Progress row
         r += 1
@@ -930,6 +935,9 @@ class App:
 
     def clear_log(self):
         self.log.delete("1.0", "end")
+    
+    def set_gps(self):
+        self.log_write("Setting GPS from current position...\n")
 
     def _exit_app(self):
         self._save_state()
