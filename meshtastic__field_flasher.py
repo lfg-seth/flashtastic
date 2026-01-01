@@ -326,14 +326,12 @@ class App:
 
         # Styles (Windows native)
         style = ttk.Style()
-        for t in ("vista", "xpnative"):
-            try:
-                style.theme_use(t)
-                break
-            except Exception:
-                pass
-        style.configure("Touch.TButton", font=self.touch_font_bold, padding=(14, 22))
-        style.configure("Keypad.TButton", font=self.touch_font_bold, padding=(16, 26))
+        try:
+            style.theme_use("xpnative")
+        except Exception:
+            pass
+        style.configure("Touch.TButton", font=self.touch_font_bold, padding=(8, 16))
+        style.configure("Keypad.TButton", font=self.touch_font_bold, padding=(10, 18))
 
         # Vars
         self.mode = tk.StringVar(value=MODE_KEYS[0])
@@ -610,10 +608,10 @@ class App:
             width=width,
             font=self.touch_font,
             relief="solid",
-            bd=2,
-            highlightthickness=1,
-            highlightbackground="#bdbdbd",
-            highlightcolor="#4a90e2",
+            # bd=2,
+            # highlightthickness=1,
+            # highlightbackground="#bdbdbd",
+            # highlightcolor="#4a90e2",
         )
         e.bind("<Button-1>", lambda ev: e.focus_set())
         e.bind("<FocusIn>", lambda ev, w=e: self._on_widget_focus(w))
@@ -706,8 +704,8 @@ class App:
                 relief="raised",
                 bd=2,
                 command=lambda kk=key: set_mode(kk),
-                padx=14,
-                pady=14,
+                padx=12,
+                pady=12,
             )
             b.grid(row=0, column=i, padx=8, pady=4, sticky="we")
             self.mode_buttons[key] = b
@@ -716,7 +714,7 @@ class App:
         r += 1
         ttk.Label(self.left, text="Firmware:", font=self.touch_font).grid(row=r, column=0, sticky="w")
         self.fw_entry = self._register_field(self.touch_entry(self.left, self.firmware_display, width=28))
-        self.fw_entry.grid(row=r, column=1, sticky="w", padx=10, ipady=10)
+        self.fw_entry.grid(row=r, column=1, sticky="w", padx=10)
         self.fw_entry.configure(state="readonly")
         ttk.Button(self.left, text="Browse…", command=self.pick_firmware, style="Touch.TButton", width=10).grid(
             row=r, column=2, sticky="we"
@@ -747,15 +745,15 @@ class App:
         rep_owner = ttk.Frame(self.owner_repeater_row)
         rep_owner.grid(row=0, column=1, sticky="w", padx=10)
 
-        self._register_field(self.touch_entry(rep_owner, self.owner_letters, width=8)).pack(side="left", padx=(0, 10), ipady=10)
+        self._register_field(self.touch_entry(rep_owner, self.owner_letters, width=18)).pack(side="left", padx=(0, 10))
         ttk.Label(rep_owner, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
-        self._register_field(self.touch_entry(rep_owner, self.owner_num, width=3)).pack(side="left", ipady=10)
+        self._register_field(self.touch_entry(rep_owner, self.owner_num, width=3)).pack(side="left")
 
         ttk.Label(self.owner_repeater_row, text="Short:", font=self.touch_font).grid(row=0, column=2, sticky="w")
         rep_short = ttk.Frame(self.owner_repeater_row)
         rep_short.grid(row=0, column=3, sticky="w", padx=10)
 
-        self._register_field(self.touch_entry(rep_short, self.owner_short_letters, width=3)).pack(side="left", padx=(0, 10), ipady=10)
+        self._register_field(self.touch_entry(rep_short, self.owner_short_letters, width=6)).pack(side="left", padx=(0, 10), ipady=10)
         ttk.Label(rep_short, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
         self._register_field(self.touch_entry(rep_short, self.owner_short_num, width=3)).pack(side="left", ipady=10)
 
