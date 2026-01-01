@@ -100,11 +100,32 @@ def detect_uf2_drives():
 # -----------------------------
 # Helpers
 # -----------------------------
+import os
+import ctypes
+from pathlib import Path
+
 def show_touch_keyboard():
-    tabtip = r"C:\\Program Files\\Common Files\\Microsoft Shared\\Ink\\TabTip.exe"
-    if os.path.exists(tabtip):
-        # subprocess is usually fine; startfile also works
-        subprocess.Popen([tabtip], shell=False)
+    tabtip = Path(r"C:\Program Files\Common Files\Microsoft Shared\Ink\TabTip.exe")
+
+    if not tabtip.exists():
+        return False
+
+    # 1) Most “Windows-y” way: os.startfile uses ShellExecute under the hood
+    try:
+        os.startfile(str(tabtip))  # noqa: S606 (Windows-only)
+        return True
+    except OSError:
+        pass
+
+    # 2) Explicit ShellExecuteW fallback
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "open", str(tabtip), None, None, 1
+        )
+        return rc > 32
+    except Exception:
+        return False
+
 
 def run_cmd_stream(cmd, log_fn, line_cb=None):
     """
@@ -497,8 +518,10 @@ class App:
             return
 
         if ch == "CLR":
+            show_touch_keyboard()
             w.delete(0, "end")
             return
+
 
         if ch == "KBRD":
             show_touch_keyboard()
@@ -639,25 +662,26 @@ class App:
                     text=k,
                     style="Keypad.TButton",
                     command=lambda kk=k: self._keypad_insert(kk),
-                    width=3
+                    width=3,
+                    takefocus=0
                 ).grid(row=r, column=c, padx=6, pady=6, sticky="nsew")
 
         nav = ttk.Frame(kp)
         nav.grid(row=len(keys), column=0, columnspan=3, pady=(10, 0), sticky="we")
         nav.columnconfigure((0, 1, 2), weight=1)
 
-        ttk.Button(nav, text="Prev", style="Keypad.TButton", command=self._focus_prev).grid(
-            row=0, column=0, padx=6, pady=6, sticky="we"
+        ttk.Button(nav, text="Prev", style="Keypad.TButton", command=self._focus_prev, takefocus=0).grid(
+            row=0, column=0, padx=6, pady=6, sticky="we",
         )
-        ttk.Button(nav, text="Next", style="Keypad.TButton", command=self._focus_next).grid(
+        ttk.Button(nav, text="Next", style="Keypad.TButton", command=self._focus_next, takefocus=0).grid(
             row=0, column=1, padx=6, pady=6, sticky="we"
         )
 
         # ++ button will be shown/hidden depending on mode
-        self.inc_btn = ttk.Button(nav, text="++", style="Keypad.TButton", command=self._increment_owner_number)
+        self.inc_btn = ttk.Button(nav, text="++", style="Keypad.TButton", command=self._increment_owner_number, takefocus=0)
         self.inc_btn.grid(row=0, column=2, padx=6, pady=6, sticky="we")
 
-        ttk.Button(nav, text="Exit", style="Keypad.TButton", command=self._exit_app).grid(
+        ttk.Button(nav, text="Exit", style="Keypad.TButton", command=self._exit_app, takefocus=0).grid(
             row=1, column=0, columnspan=3, padx=6, pady=(6, 0), sticky="we"
         )
 
