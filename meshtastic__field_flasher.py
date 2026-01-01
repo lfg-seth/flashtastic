@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
 import ctypes
 from pathlib import Path
+import subprocess
 
 # Optional GPS (pyserial). If not installed, GPS status will show unavailable.
 try:
@@ -99,6 +100,12 @@ def detect_uf2_drives():
 # -----------------------------
 # Helpers
 # -----------------------------
+def show_touch_keyboard():
+    tabtip = r"C:\\Program Files\\Common Files\\Microsoft Shared\\Ink\\TabTip.exe"
+    if os.path.exists(tabtip):
+        # subprocess is usually fine; startfile also works
+        subprocess.Popen([tabtip], shell=False)
+
 def run_cmd_stream(cmd, log_fn, line_cb=None):
     """
     Stream subprocess output in near-real-time.
@@ -493,13 +500,10 @@ class App:
             w.delete(0, "end")
             return
 
-        if ch == "±":
-            s = w.get()
-            if s.startswith("-"):
-                w.delete(0, 1)
-            else:
-                w.insert(0, "-")
+        if ch == "KBRD":
+            show_touch_keyboard()
             return
+
 
         w.insert(tk.INSERT, ch)
 
@@ -625,7 +629,7 @@ class App:
             ["4", "5", "6"],
             ["1", "2", "3"],
             ["-", "0", "."],
-            ["⌫", "CLR", "±"],
+            ["⌫", "CLR", "KBRD"],
         ]
 
         for r, row in enumerate(keys):
