@@ -1,0 +1,48 @@
+{
+  "last_mode": "Heltec V3",
+  "modes": {
+    "RAK4631 Router (UF2 Drive)": {
+      "firmware_path": "rak4631.uf2",
+      "uf2_drive": "",
+      "flash_command": "",
+      "meshtastic_exe": "meshtastic",
+      "device_port": "",
+      "owner_letters": "SNORR TESTRAK",
+      "owner_num": "01",
+      "owner_short_letters": "MT",
+      "owner_short_num": "01",
+      "lat": "37.8651",
+      "lon": "-119.5383"
+    },
+    "RAK4631": {
+      "firmware_path": "rak4631.uf2",
+      "uf2_drive": "",
+      "owner_letters": "SNORR TEST",
+      "owner_num": "01",
+      "owner_short_letters": "MT",
+      "owner_short_num": "01",
+      "lat": "37.8651",
+      "lon": "-119.5383"
+    },
+    "Heltec V3": {
+      "firmware_path": "heltec_v3_client.bin",
+      "uf2_drive": "",
+      "owner_letters": "SNORR TEST",
+      "owner_num": "01",
+      "owner_short_letters": "MT",
+      "owner_short_num": "01",
+      "lat": "37.8651",
+      "lon": "-119.5383"
+    },
+    "Heltec V4": {
+      "firmware_path": "heltec_v4_gps.bin",
+      "uf2_drive": "",
+      "owner_letters": "SNORR TEST",
+      "owner_num": "01",
+      "owner_short_letters": "MT",
+      "owner_short_num": "01",
+      "lat": "37.8651",
+      "lon": "-119.5383"
+    }
+  }
+}
