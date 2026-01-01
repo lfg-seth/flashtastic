@@ -310,8 +310,8 @@ class App:
         self.root = root
 
         # Fonts
-        self.touch_font = font.Font(family="Segoe UI", size=24)
-        self.touch_font_bold = font.Font(family="Segoe UI", size=24, weight="bold")
+        self.touch_font = font.Font(family="Segoe UI", size=20)
+        self.touch_font_bold = font.Font(family="Segoe UI", size=20, weight="bold")
         self.log_font = font.Font(family="Consolas", size=16)
 
         # Mode button colors
@@ -799,7 +799,7 @@ class App:
         self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=10)
         self.configure_btn.pack(side="left", padx=6, pady=6)
 
-        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=12)
+        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=10)
         self.erase_btn.pack(side="left", padx=6, pady=6)
 
         self.set_gps_btn = ttk.Button(btns, text="Set GPS", command=self.set_gps, style="Touch.TButton", width=8)
