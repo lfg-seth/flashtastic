@@ -370,9 +370,6 @@ class App:
         self.firmware_display = tk.StringVar(value="")
 
         self.uf2_drive = tk.StringVar(value="")
-                # Heltec esptool baud (user adjustable)
-        self.esptool_baud = tk.StringVar(value="115200")
-
 
         # Repeater-style owner (RAK)
         self.owner_letters = tk.StringVar(value="RAK")
@@ -446,7 +443,6 @@ class App:
             "firmware_path": self.firmware_path.get(),
 
             "uf2_drive": self.uf2_drive.get(),
-            "esptool_baud": self.esptool_baud.get(),
 
             "owner_letters": self.owner_letters.get(),
             "owner_num": self.owner_num.get(),
@@ -458,7 +454,6 @@ class App:
 
             "lat": self.lat.get(),
             "lon": self.lon.get(),
-
         }
         try:
             STATE_PATH.write_text(json.dumps(st, indent=2), encoding="utf-8")
@@ -708,9 +703,6 @@ class App:
         self.left = ttk.Frame(outer)
         self.left.grid(row=0, column=0, sticky="nsew")
         self.left.columnconfigure(1, weight=1)
-        self.left.columnconfigure(2, weight=0)
-        self.left.columnconfigure(3, weight=0)
-
 
         self.keypad = self._build_keypad(outer)
         self.keypad.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
@@ -823,15 +815,7 @@ class App:
         ttk.Label(self.left, text="Laptop GPS:", font=self.touch_font).grid(row=r, column=0, sticky="w")
         self.gps_status_var = tk.StringVar(value="(starting...)")
         self.gps_status_lbl = ttk.Label(self.left, textvariable=self.gps_status_var, font=self.touch_font)
-        self.gps_status_lbl.grid(row=r, column=1, sticky="w", padx=10)
-
-
-        # Baud box (Heltec only) on the GPS line
-        ttk.Label(self.left, text="Baud:", font=self.touch_font).grid(row=r, column=2, sticky="e", padx=(10, 6))
-
-        self.baud_entry = self._register_field(self.touch_entry(self.left, self.esptool_baud, width=8))
-        self.baud_entry.grid(row=r, column=3, sticky="w", padx=(0, 10), ipady=8)
-
+        self.gps_status_lbl.grid(row=r, column=1, columnspan=2, sticky="w", padx=10)
 
         # Action buttons
         r += 1
@@ -883,8 +867,6 @@ class App:
             self.mode,
             self.firmware_path,
             self.uf2_drive,
-            self.esptool_baud,
-
 
             self.owner_letters, self.owner_num,
             self.owner_short_letters, self.owner_short_num,
@@ -926,8 +908,6 @@ class App:
         self._update_mode_button_styles()
 
         saved = (self._state.get("modes") or {}).get(mode, {})
-        self.esptool_baud.set(saved.get("esptool_baud") or "115200")
-
 
         # firmware
         fw_saved = saved.get("firmware_path") or d["firmware_default"]
@@ -987,13 +967,6 @@ class App:
         else:
             if self.erase_btn.winfo_ismapped():
                 self.erase_btn.pack_forget()
-        
-        # Baud field only for Heltecs
-        if d["flash_method"] == "esptool":
-            self.baud_entry.configure(state="normal")
-        else:
-            self.baud_entry.configure(state="disabled")
-
 
         # Set GPS button: only meaningful when mode needs fixed coords (RAK)
         if d["gps_mode"] == "fixed":
@@ -1153,7 +1126,7 @@ class App:
                 "--set", "mqtt.enabled", "true",
                 "--set", "mqtt.server", "mqtt.spp.lol",
                 "--set", "mqtt.username", "MC01",
-                "--set", "mqtt.password", "snorr702"
+                "--set", "mqtt.password", "snorr702",
                 "--set", "mqtt.proxy_to_client_enabled", "true",
                 "--set", "mqtt.map_reporting_enabled", "true",
                 "--set", "mqtt.encryption_enabled", "true",
@@ -1195,9 +1168,7 @@ class App:
         self._progress_show("Flashing…")
         try:
             self.log_write("Flashing (esptool)...\n")
-            baud = self.esptool_baud.get().strip() or "115200"
-            cmd = ["esptool", "--baud", baud, "write-flash", "0x00", fw]
-
+            cmd = ["esptool", "--baud", "115200", "write-flash", "0x00", fw]
             run_cmd_stream(cmd, self.log_write, line_cb=self._try_parse_esptool_progress)
             self._progress_set(100.0, "Done")
             self.log_write("Flash done.\n")
@@ -1208,9 +1179,7 @@ class App:
         self._progress_show("Erasing…")
         try:
             self.log_write("Erasing flash (esptool erase-flash)...\n")
-            baud = self.esptool_baud.get().strip() or "115200"
-            run_cmd_stream(["esptool", "--baud", baud, "erase-flash"], self.log_write)
-
+            run_cmd_stream(["esptool", "erase-flash"], self.log_write)
             self._progress_set(100.0, "Done")
             self.log_write("Erase complete.\n")
         finally:
