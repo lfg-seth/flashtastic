@@ -15,26 +15,28 @@
       "lon": "-119.5383"
     },
     "RAK4631": {
-      "firmware_path": "rak4631.uf2",
-      "uf2_drive": "",
+      "firmware_path": "C:/Users/Setheth/Documents/GitHub/flashtastic/rak4631.uf2",
+      "uf2_drive": "D:\\",
+      "esptool_baud": "115200",
       "owner_letters": "RAK",
-      "owner_num": "02",
+      "owner_num": "03",
       "owner_short_letters": "MT",
-      "owner_short_num": "02",
+      "owner_short_num": "03",
       "user_owner": "John Doe",
       "user_owner_short": "JD",
-      "lat": "36.052461",
-      "lon": "-115.029682"
+      "lat": "36.05253",
+      "lon": "-115.03028"
     },
     "Heltec V3": {
-      "firmware_path": "C:/Users/Setheth/OneDrive - LFG Automotive/Documents/GitHub/flashtastic/heltecv3.bin",
+      "firmware_path": "C:/Users/Setheth/Documents/GitHub/flashtastic/heltec-v3.bin",
       "uf2_drive": "",
+      "esptool_baud": "921600",
       "owner_letters": "TESTING",
       "owner_num": "01",
       "owner_short_letters": "MT",
       "owner_short_num": "01",
-      "user_owner": "seth smith",
-      "user_owner_short": "SETH",
+      "user_owner": "SNORR UNCONFIGURED",
+      "user_owner_short": "MC74",
       "lat": "37.8651",
       "lon": "-119.5383"
     },

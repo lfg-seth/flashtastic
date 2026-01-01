@@ -827,10 +827,10 @@ class App:
 
 
         # Baud box (Heltec only) on the GPS line
-        ttk.Label(self.left, text="Baud:", font=self.touch_font).grid(row=r, column=2, sticky="e", padx=(10, 6))
+        # ttk.Label(self.left, text="Baud:", font=self.touch_font).grid(row=r, column=2, sticky="e", padx=(10, 6))
 
         self.baud_entry = self._register_field(self.touch_entry(self.left, self.esptool_baud, width=8))
-        self.baud_entry.grid(row=r, column=3, sticky="w", padx=(0, 10), ipady=8)
+        self.baud_entry.grid(row=r, column=2, sticky="w", padx=(0, 10), ipady=8)
 
 
         # Action buttons
@@ -1153,7 +1153,7 @@ class App:
                 "--set", "mqtt.enabled", "true",
                 "--set", "mqtt.server", "mqtt.spp.lol",
                 "--set", "mqtt.username", "MC01",
-                "--set", "mqtt.password", "snorr702"
+                "--set", "mqtt.password", "snorr702",
                 "--set", "mqtt.proxy_to_client_enabled", "true",
                 "--set", "mqtt.map_reporting_enabled", "true",
                 "--set", "mqtt.encryption_enabled", "true",
