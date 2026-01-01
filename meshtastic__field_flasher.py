@@ -1090,6 +1090,7 @@ class App:
         if d["flash_method"] == "uf2_drive":
             if not self.uf2_drive.get().strip():
                 raise RuntimeError("Select/detect the UF2 drive.")
+            
         if d["flash_method"] == "esptool":
             b = (self.esptool_baud.get().strip() or "115200")
             if not b.isdigit():
