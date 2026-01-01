@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -87,30 +88,19 @@ def detect_uf2_drives():
 # -----------------------------
 # Helpers
 # -----------------------------
-def run_cmd_stream(cmd, log_fn):
+def run_cmd_stream(cmd, log_fn, line_cb=None):
     """
-    Stream subprocess output in near-real-time, including carriage-return progress
-    (common for esptool progress bars).
+    Stream subprocess output in near-real-time.
+    Handles esptool carriage-return progress updates by treating '\r' as line break.
+    Calls line_cb(line) when a line/progress update is assembled.
     """
     if isinstance(cmd, list):
         log_fn(f"$ {' '.join(cmd)}\n")
-        p = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=0,
-        )
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
     else:
         log_fn(f"$ {cmd}\n")
-        p = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=0,
-            shell=True
-        )
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0, shell=True)
 
-    # Read raw bytes so we can handle \r progress updates
     out = p.stdout
     if out is None:
         rc = p.wait()
@@ -118,21 +108,32 @@ def run_cmd_stream(cmd, log_fn):
             raise RuntimeError(f"Command failed (exit {rc})")
         return
 
+    buf = ""
     while True:
         b = out.read(1)
         if not b:
             break
-        try:
-            ch = b.decode("utf-8", errors="replace")
-        except Exception:
-            ch = str(b)
+        ch = b.decode("utf-8", errors="replace")
 
-        if ch == "\r":
-            # esptool uses carriage return to update progress on same line;
-            # in a Text widget we can't "overwrite", so just start a new line.
-            log_fn("\n")
+        if ch == "\r" or ch == "\n":
+            if buf:
+                if line_cb:
+                    try:
+                        line_cb(buf)
+                    except Exception:
+                        pass
+                log_fn(buf + "\n")
+                buf = ""
         else:
-            log_fn(ch)
+            buf += ch
+
+    if buf:
+        if line_cb:
+            try:
+                line_cb(buf)
+            except Exception:
+                pass
+        log_fn(buf + "\n")
 
     rc = p.wait()
     if rc != 0:
@@ -185,7 +186,7 @@ class App:
         # Styles
         style = ttk.Style()
         try:
-            style.theme_use("clam")
+            style.theme_use("xpnative")
         except Exception:
             pass
         style.configure("Touch.TButton", font=self.touch_font_bold, padding=(8, 16))
@@ -193,7 +194,6 @@ class App:
 
         # Vars
         self.mode = tk.StringVar(value=MODE_KEYS[0])
-
         self.firmware_path = tk.StringVar(value="")
         self.uf2_drive = tk.StringVar(value="")
 
@@ -215,7 +215,7 @@ class App:
         self._build_ui()
         self._wire_traces()
 
-        # Restore last mode and mode state
+        # Restore last mode
         last_mode = self._state.get("last_mode")
         if last_mode in MODE_DEFS:
             self.mode.set(last_mode)
@@ -351,6 +351,122 @@ class App:
         self._schedule_save()
 
     # -----------------------------
+    # Progress UI (thread-safe)
+    # -----------------------------
+    def _progress_show_determinate(self, text=""):
+        def ui():
+            self.prog_bar.configure(mode="determinate")
+            self.prog_var.set(0.0)
+            self.prog_lbl.config(text=text)
+            self.prog_row.grid()
+        self.root.after(0, ui)
+
+    def _progress_show_indeterminate(self, text=""):
+        def ui():
+            self.prog_bar.configure(mode="indeterminate")
+            self.prog_lbl.config(text=text)
+            self.prog_row.grid()
+            self.prog_bar.start(10)
+        self.root.after(0, ui)
+
+    def _progress_hide(self):
+        def ui():
+            try:
+                self.prog_bar.stop()
+            except Exception:
+                pass
+            self.prog_row.grid_remove()
+            self.prog_var.set(0.0)
+            self.prog_lbl.config(text="")
+        self.root.after(0, ui)
+
+    def _progress_set(self, pct: float, text: str = ""):
+        def ui():
+            try:
+                self.prog_bar.stop()
+            except Exception:
+                pass
+            self.prog_bar.configure(mode="determinate")
+            pct2 = max(0.0, min(100.0, float(pct)))
+            self.prog_var.set(pct2)
+            if text:
+                self.prog_lbl.config(text=text)
+        self.root.after(0, ui)
+
+    def _try_parse_esptool_progress(self, line: str):
+        # Example:
+        # Writing at 0x00047e18 [=>                            ]   7.6% 98304/1297264 bytes...
+        m = re.search(r"(\d+(?:\.\d+)?)%\s+(\d+)\s*/\s*(\d+)\s+bytes", line)
+        if m:
+            pct = float(m.group(1))
+            cur = int(m.group(2))
+            total = int(m.group(3))
+            self._progress_set(pct, f"{pct:.1f}%  {cur}/{total}")
+            return True
+
+        # Sometimes percent without bytes
+        m = re.search(r"(\d+(?:\.\d+)?)%", line)
+        if m and "Writing at" in line:
+            pct = float(m.group(1))
+            self._progress_set(pct, f"{pct:.1f}%")
+            return True
+
+        return False
+
+    # -----------------------------
+    # Progress UI (thread-safe) - CANVAS ONLY
+    # -----------------------------
+    def _draw_progress(self):
+        c = self.prog_canvas
+        c.delete("all")
+
+        w = max(1, c.winfo_width())
+        h = max(1, c.winfo_height())
+
+        pad = 2
+        bw = w - pad * 2
+        bh = h - pad * 2
+
+        # Windows-ish colors
+        border = "#bdbdbd"
+        trough = "#f0f0f0"
+        fill = "#22a33a"   # green
+
+        # outer frame
+        c.create_rectangle(pad, pad, pad + bw, pad + bh, outline=border, fill=trough)
+
+        # fill
+        pct = max(0.0, min(100.0, float(self._prog_pct)))
+        fw = int(bw * (pct / 100.0))
+        if fw > 0:
+            c.create_rectangle(pad + 1, pad + 1, pad + fw, pad + bh - 1, outline="", fill=fill)
+
+    def _progress_show(self, text=""):
+        def ui():
+            self._prog_pct = 0.0
+            self.prog_lbl.config(text=text)
+            self.prog_row.grid()
+            self._draw_progress()
+        self.root.after(0, ui)
+
+    def _progress_hide(self):
+        def ui():
+            self.prog_row.grid_remove()
+            self._prog_pct = 0.0
+            self.prog_lbl.config(text="")
+            self._draw_progress()
+        self.root.after(0, ui)
+
+    def _progress_set(self, pct: float, text: str = ""):
+        def ui():
+            self._prog_pct = max(0.0, min(100.0, float(pct)))
+            if text:
+                self.prog_lbl.config(text=text)
+            self._draw_progress()
+        self.root.after(0, ui)
+
+
+    # -----------------------------
     # UI construction
     # -----------------------------
     def touch_entry(self, parent, textvariable, width):
@@ -469,14 +585,16 @@ class App:
             row=r, column=2, sticky="we"
         )
 
-        # UF2 row frame (shown for UF2 modes)
+        # UF2 row frame (RAK only)
         r += 1
         self.uf2_row = ttk.Frame(self.left)
         self.uf2_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 0))
         self.uf2_row.columnconfigure(1, weight=1)
 
         ttk.Label(self.uf2_row, text="UF2 Drive:", font=self.touch_font).grid(row=0, column=0, sticky="w")
-        self.drive_combo = ttk.Combobox(self.uf2_row, textvariable=self.uf2_drive, values=[], font=self.touch_font, width=10)
+        self.drive_combo = ttk.Combobox(
+            self.uf2_row, textvariable=self.uf2_drive, values=[], font=self.touch_font, width=10
+        )
         self.drive_combo.grid(row=0, column=1, sticky="w", padx=10)
         self._register_field(self.drive_combo)
         ttk.Button(self.uf2_row, text="Refresh", command=self.refresh_drives, style="Touch.TButton", width=10).grid(
@@ -513,20 +631,43 @@ class App:
 
         # Action buttons
         r += 1
-        self.btns = ttk.Frame(self.left)
-        self.btns.grid(row=r, column=0, columnspan=3, sticky="we", pady=(12, 8))
+        btns = ttk.Frame(self.left)
+        btns.grid(row=r, column=0, columnspan=3, sticky="we", pady=(12, 8))
 
-        self.flash_btn = ttk.Button(self.btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=14)
+        self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=14)
         self.flash_btn.pack(side="left", padx=10, pady=6)
 
-        self.configure_btn = ttk.Button(self.btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=16)
+        self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=16)
         self.configure_btn.pack(side="left", padx=10, pady=6)
 
-        self.erase_btn = ttk.Button(self.btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=16)
-        self.erase_btn.pack(side="left", padx=10, pady=6)
+        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=16)
+        self.erase_btn.pack(side="left", padx=10, pady=6)  # will be hidden for RAK in apply_mode
 
-        self.clear_btn = ttk.Button(self.btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=12)
+        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=12)
         self.clear_btn.pack(side="left", padx=10, pady=6)
+
+        # Progress row
+        r += 1
+        self.prog_row = ttk.Frame(self.left)
+        self.prog_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 8))
+        self.prog_row.columnconfigure(0, weight=1)
+
+        # Canvas progress bar (green, Windows-ish)
+        self.prog_canvas = tk.Canvas(self.prog_row, height=26, highlightthickness=0)
+        self.prog_canvas.grid(row=0, column=0, sticky="we", padx=(0, 10))
+
+        self.prog_lbl = ttk.Label(self.prog_row, text="", font=self.touch_font)
+        self.prog_lbl.grid(row=0, column=1, sticky="e")
+
+        # internal progress state
+        self._prog_pct = 0.0
+        self._prog_phase = "Idle"
+
+        # draw once and redraw on resize
+        self.prog_canvas.bind("<Configure>", lambda e: self._draw_progress())
+
+
+        self.prog_row.grid_remove()  # hidden by default
 
         # Log
         r += 1
@@ -591,7 +732,7 @@ class App:
         self.lat.set(saved.get("lat") or self.lat.get())
         self.lon.set(saved.get("lon") or self.lon.get())
 
-        # show correct flashing row
+        # UF2 drive row only for RAK
         if d["flash_method"] == "uf2_drive":
             self.uf2_row.grid()
             self.refresh_drives()
@@ -606,7 +747,7 @@ class App:
             self.lat_entry.configure(state="disabled")
             self.lon_entry.configure(state="disabled")
 
-        # show Erase only for Heltecs
+        # Erase only for Heltecs
         if d["flash_method"] == "esptool":
             if not self.erase_btn.winfo_ismapped():
                 self.erase_btn.pack(side="left", padx=10, pady=6)
@@ -694,23 +835,36 @@ class App:
             self.log_write("Flashing (UF2 copy)...\n")
             copy_uf2_to_drive(fw, self.uf2_drive.get().strip(), self.log_write)
             wait_seconds(8, self.log_write)
+            self.log_write("Flash done.\n")
             return
 
-        # Heltec modes: esptool auto-detect, show streaming progress
-        self.log_write("Flashing (esptool)...\n")
-        cmd = ["esptool", "--baud", "115200", "write-flash", "0x00", fw]
-        run_cmd_stream(cmd, self.log_write)
-        self.log_write("\nFlash done.\n")
+        # Heltec: esptool write-flash with canvas progress bar
+        self._progress_show("Flashing…")
+        try:
+            self.log_write("Flashing (esptool)...\n")
+            cmd = ["esptool", "--baud", "115200", "write-flash", "0x00", fw]
+            run_cmd_stream(cmd, self.log_write, line_cb=self._try_parse_esptool_progress)
+            self._progress_set(100.0, "Done")
+            self.log_write("Flash done.\n")
+        finally:
+            self._progress_hide()
+
 
     def _do_configure(self):
         self.log_write("Configuring via Meshtastic CLI...\n")
         run_cmd_stream(self._meshtastic_config_cmd(), self.log_write)
-        self.log_write("\nConfiguration complete.\n")
+        self.log_write("Configuration complete.\n")
 
     def _do_erase(self):
-        self.log_write("Erasing flash (esptool erase-flash)...\n")
-        run_cmd_stream(["esptool", "erase-flash"], self.log_write)
-        self.log_write("\nErase complete.\n")
+        self._progress_show("Erasing…")
+        try:
+            self.log_write("Erasing flash (esptool erase-flash)...\n")
+            run_cmd_stream(["esptool", "erase-flash"], self.log_write)
+            self._progress_set(100.0, "Done")
+            self.log_write("Erase complete.\n")
+        finally:
+            self._progress_hide()
+
 
     # -----------------------------
     # Buttons (threaded)
@@ -742,7 +896,8 @@ class App:
             try:
                 mode = self.mode.get()
                 if MODE_DEFS[mode]["flash_method"] != "esptool":
-                    raise RuntimeError("Erase is only available for Heltec (esptool) modes.")
+                    raise RuntimeError("Erase is only available for Heltec modes.")
+                # For erase, firmware isn't actually required, but keeping your validation consistent is fine.
                 self._validate_common()
                 self.log_write(f"Mode: {MODE_DEFS[self.mode.get()]['label']}\n")
                 self._do_erase()

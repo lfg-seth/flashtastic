@@ -25,7 +25,7 @@
       "lon": "-119.5383"
     },
     "Heltec V3": {
-      "firmware_path": "heltec_v3_client.bin",
+      "firmware_path": "C:/Users/Setheth/OneDrive - LFG Automotive/Documents/GitHub/flashtastic/heltecv3.bin",
       "uf2_drive": "",
       "owner_letters": "SNORR TEST",
       "owner_num": "01",
