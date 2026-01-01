@@ -21,6 +21,8 @@
       "owner_num": "02",
       "owner_short_letters": "MT",
       "owner_short_num": "02",
+      "user_owner": "John Doe",
+      "user_owner_short": "JD",
       "lat": "37.8651",
       "lon": "-119.5383"
     },

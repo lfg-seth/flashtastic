@@ -10,6 +10,12 @@ from tkinter import ttk, filedialog, messagebox, font
 import ctypes
 from pathlib import Path
 
+# Optional GPS (pyserial). If not installed, GPS status will show unavailable.
+try:
+    import serial  # type: ignore
+except Exception:
+    serial = None
+
 
 # -----------------------------
 # Constants / Persistence
@@ -21,6 +27,9 @@ STATE_PATH = APP_DIR / "state.json"
 
 KEYPAD_WIDTH = 640  # 1/3 of 1920px
 
+GPS_COM_PORT = "COM8"
+GPS_BAUD = 9600
+
 
 # -----------------------------
 # Modes
@@ -30,8 +39,9 @@ MODE_DEFS = {
         "label": "RAK4631 Router (UF2 Drive)",
         "flash_method": "uf2_drive",
         "firmware_default": "rak4631.uf2",
-        "gps_mode": "fixed",   # fixed position lat/lon required
+        "gps_mode": "fixed",  # lat/lon required
         "role": "ROUTER",
+        "owner_mode": "repeater",  # letters+2 digits, short+2 digits
     },
     "Heltec V3": {
         "label": "Heltec V3 Client (No GPS)",
@@ -39,6 +49,7 @@ MODE_DEFS = {
         "firmware_default": "heltec_v3_client.bin",
         "gps_mode": "none",
         "role": "CLIENT",
+        "owner_mode": "user",  # name + short name (no numbers)
     },
     "Heltec V4": {
         "label": "Heltec V4 Client (GPS)",
@@ -46,9 +57,9 @@ MODE_DEFS = {
         "firmware_default": "heltec_v4_gps.bin",
         "gps_mode": "gps",
         "role": "CLIENT",
+        "owner_mode": "user",
     },
 }
-
 MODE_KEYS = list(MODE_DEFS.keys())
 
 
@@ -91,8 +102,7 @@ def detect_uf2_drives():
 def run_cmd_stream(cmd, log_fn, line_cb=None):
     """
     Stream subprocess output in near-real-time.
-    Handles esptool carriage-return progress updates by treating '\r' as line break.
-    Calls line_cb(line) when a line/progress update is assembled.
+    Treat '\r' as a line break so esptool progress updates are captured.
     """
     if isinstance(cmd, list):
         log_fn(f"$ {' '.join(cmd)}\n")
@@ -161,11 +171,142 @@ def wait_seconds(sec, log_fn):
     log_fn("\n")
 
 
+def resolve_firmware_path(p: str) -> str:
+    """
+    If user stored just a filename, try APP_DIR/filename.
+    If absolute or exists as given, keep it.
+    """
+    p = (p or "").strip()
+    if not p:
+        return ""
+    if os.path.isabs(p) and os.path.isfile(p):
+        return p
+    if os.path.isfile(p):
+        return os.path.abspath(p)
+    cand = str(APP_DIR / p)
+    if os.path.isfile(cand):
+        return cand
+    return p  # last resort; validation will fail if not found
+
+
+def nmea_to_decimal_latlon(lat_str, lat_hemi, lon_str, lon_hemi):
+    # lat: ddmm.mmmm, lon: dddmm.mmmm
+    if not lat_str or not lon_str:
+        return None, None
+
+    try:
+        lat_dd = float(lat_str[:2])
+        lat_mm = float(lat_str[2:])
+        lon_dd = float(lon_str[:3])
+        lon_mm = float(lon_str[3:])
+        lat = lat_dd + (lat_mm / 60.0)
+        lon = lon_dd + (lon_mm / 60.0)
+        if lat_hemi.upper() == "S":
+            lat = -lat
+        if lon_hemi.upper() == "W":
+            lon = -lon
+        return lat, lon
+    except Exception:
+        return None, None
+
+
+# -----------------------------
+# GPS Reader (NMEA on COM8)
+# -----------------------------
+class GpsStatus:
+    def __init__(self):
+        self.has_fix = False
+        self.fix_quality = 0  # from GGA (0 invalid, 1 GPS, 2 DGPS, ...)
+        self.sats = 0
+        self.hdop = None
+        self.lat = None
+        self.lon = None
+        self.last_update = 0.0
+        self.error = ""
+
+
+class GpsReader(threading.Thread):
+    def __init__(self, port: str, baud: int, status: GpsStatus, stop_evt: threading.Event):
+        super().__init__(daemon=True)
+        self.port = port
+        self.baud = baud
+        self.status = status
+        self.stop_evt = stop_evt
+
+    def run(self):
+        if serial is None:
+            self.status.error = "pyserial not installed"
+            return
+
+        while not self.stop_evt.is_set():
+            try:
+                with serial.Serial(self.port, self.baud, timeout=1) as ser:
+                    self.status.error = ""
+                    line_buf = b""
+                    while not self.stop_evt.is_set():
+                        b = ser.read(1)
+                        if not b:
+                            continue
+                        if b == b"\n":
+                            line = line_buf.decode("utf-8", errors="replace").strip()
+                            line_buf = b""
+                            if line:
+                                self._handle_line(line)
+                        elif b != b"\r":
+                            line_buf += b
+            except Exception as e:
+                self.status.error = f"{type(e).__name__}: {e}"
+                self.status.has_fix = False
+                time.sleep(1.0)
+
+    def _handle_line(self, line: str):
+        # We only need GGA for fix/hdop/lat/lon
+        # Example: $GPGGA,hhmmss,lat,N,lon,W,fix,sats,hdop,alt,M,....
+        if "GGA" not in line:
+            return
+        parts = line.split(",")
+        if len(parts) < 10:
+            return
+
+        fix_quality = 0
+        sats = 0
+        hdop = None
+        lat = None
+        lon = None
+
+        try:
+            fix_quality = int(parts[6]) if parts[6] else 0
+        except Exception:
+            fix_quality = 0
+
+        try:
+            sats = int(parts[7]) if parts[7] else 0
+        except Exception:
+            sats = 0
+
+        try:
+            hdop = float(parts[8]) if parts[8] else None
+        except Exception:
+            hdop = None
+
+        lat_str, lat_hemi = parts[2], parts[3]
+        lon_str, lon_hemi = parts[4], parts[5]
+        lat, lon = nmea_to_decimal_latlon(lat_str, lat_hemi, lon_str, lon_hemi)
+
+        self.status.fix_quality = fix_quality
+        self.status.sats = sats
+        self.status.hdop = hdop
+        self.status.lat = lat
+        self.status.lon = lon
+        self.status.has_fix = fix_quality > 0 and (lat is not None) and (lon is not None)
+        self.status.last_update = time.time()
+
+
 # -----------------------------
 # App
 # -----------------------------
 class App:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
 
         # Fonts
@@ -176,34 +317,51 @@ class App:
         # Mode button colors
         self.mode_bg_normal = "#2b2b2b"
         self.mode_fg_normal = "#ffffff"
-        self.mode_bg_selected = "#2e7d32"   # green
+        self.mode_bg_selected = "#2e7d32"
         self.mode_fg_selected = "#ffffff"
 
         root.title("Meshtastic Field Flasher")
         root.attributes("-fullscreen", True)
         root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
 
-        # Styles
+        # Styles (Windows native)
         style = ttk.Style()
-        try:
-            style.theme_use("xpnative")
-        except Exception:
-            pass
-        style.configure("Touch.TButton", font=self.touch_font_bold, padding=(8, 16))
-        style.configure("Keypad.TButton", font=self.touch_font_bold, padding=(10, 18))
+        for t in ("vista", "xpnative"):
+            try:
+                style.theme_use(t)
+                break
+            except Exception:
+                pass
+        style.configure("Touch.TButton", font=self.touch_font_bold, padding=(14, 22))
+        style.configure("Keypad.TButton", font=self.touch_font_bold, padding=(16, 26))
 
         # Vars
         self.mode = tk.StringVar(value=MODE_KEYS[0])
+
+        # Firmware: store full path, show only filename
         self.firmware_path = tk.StringVar(value="")
+        self.firmware_display = tk.StringVar(value="")
+
         self.uf2_drive = tk.StringVar(value="")
 
-        self.owner_letters = tk.StringVar(value="SNORR TEST")
-        self.owner_num = tk.StringVar(value="01")
-        self.owner_short_letters = tk.StringVar(value="MT")
-        self.owner_short_num = tk.StringVar(value="01")
+        # Repeater-style owner (RAK)
+        self.owner_letters = tk.StringVar(value="RAK")
+        self.owner_num = tk.StringVar(value="01")  # 2 digits
+        self.owner_short_letters = tk.StringVar(value="RK")  # 2 chars
+        self.owner_short_num = tk.StringVar(value="01")  # 2 digits
 
+        # User-style owner (Heltec)
+        self.user_owner = tk.StringVar(value="John Doe")
+        self.user_owner_short = tk.StringVar(value="JD")
+
+        # Lat/lon for fixed devices (RAK)
         self.lat = tk.StringVar(value="37.8651")
         self.lon = tk.StringVar(value="-119.5383")
+
+        # GPS status
+        self.gps_status = GpsStatus()
+        self._gps_stop = threading.Event()
+        self._gps_thread = GpsReader(GPS_COM_PORT, GPS_BAUD, self.gps_status, self._gps_stop)
 
         # Focus/tab + persistence
         self.active_widget = None
@@ -211,7 +369,7 @@ class App:
         self._save_after_id = None
         self._state = self._load_state()
 
-        # Build UI
+        # UI
         self._build_ui()
         self._wire_traces()
 
@@ -221,6 +379,13 @@ class App:
             self.mode.set(last_mode)
 
         self.apply_mode()
+
+        # Start GPS polling + UI updates
+        self._gps_thread.start()
+        self._tick_gps_ui()
+
+        # Close handler
+        self.root.protocol("WM_DELETE_WINDOW", self._exit_app)
 
     # -----------------------------
     # Persistence
@@ -249,11 +414,17 @@ class App:
         st.setdefault("modes", {})
         st["modes"][mode] = {
             "firmware_path": self.firmware_path.get(),
+
             "uf2_drive": self.uf2_drive.get(),
+
             "owner_letters": self.owner_letters.get(),
             "owner_num": self.owner_num.get(),
             "owner_short_letters": self.owner_short_letters.get(),
             "owner_short_num": self.owner_short_num.get(),
+
+            "user_owner": self.user_owner.get(),
+            "user_owner_short": self.user_owner_short.get(),
+
             "lat": self.lat.get(),
             "lon": self.lon.get(),
         }
@@ -335,86 +506,31 @@ class App:
         w.insert(tk.INSERT, ch)
 
     def _increment_owner_number(self):
-        def inc(var: tk.StringVar):
+        # Only meaningful for RAK
+        def inc2(var: tk.StringVar):
             s = var.get().strip()
-            width = len(s) if s.isdigit() and len(s) > 0 else 0
             try:
                 n = int(s) if s else 0
-            except ValueError:
+            except Exception:
                 n = 0
-                width = 0
             n += 1
-            var.set(str(n).zfill(width) if width > 0 else str(n))
+            var.set(str(n).zfill(2))
 
-        inc(self.owner_num)
-        inc(self.owner_short_num)
+        inc2(self.owner_num)
+        inc2(self.owner_short_num)
         self._schedule_save()
 
     # -----------------------------
-    # Progress UI (thread-safe)
+    # Firmware UI helpers
     # -----------------------------
-    def _progress_show_determinate(self, text=""):
-        def ui():
-            self.prog_bar.configure(mode="determinate")
-            self.prog_var.set(0.0)
-            self.prog_lbl.config(text=text)
-            self.prog_row.grid()
-        self.root.after(0, ui)
-
-    def _progress_show_indeterminate(self, text=""):
-        def ui():
-            self.prog_bar.configure(mode="indeterminate")
-            self.prog_lbl.config(text=text)
-            self.prog_row.grid()
-            self.prog_bar.start(10)
-        self.root.after(0, ui)
-
-    def _progress_hide(self):
-        def ui():
-            try:
-                self.prog_bar.stop()
-            except Exception:
-                pass
-            self.prog_row.grid_remove()
-            self.prog_var.set(0.0)
-            self.prog_lbl.config(text="")
-        self.root.after(0, ui)
-
-    def _progress_set(self, pct: float, text: str = ""):
-        def ui():
-            try:
-                self.prog_bar.stop()
-            except Exception:
-                pass
-            self.prog_bar.configure(mode="determinate")
-            pct2 = max(0.0, min(100.0, float(pct)))
-            self.prog_var.set(pct2)
-            if text:
-                self.prog_lbl.config(text=text)
-        self.root.after(0, ui)
-
-    def _try_parse_esptool_progress(self, line: str):
-        # Example:
-        # Writing at 0x00047e18 [=>                            ]   7.6% 98304/1297264 bytes...
-        m = re.search(r"(\d+(?:\.\d+)?)%\s+(\d+)\s*/\s*(\d+)\s+bytes", line)
-        if m:
-            pct = float(m.group(1))
-            cur = int(m.group(2))
-            total = int(m.group(3))
-            self._progress_set(pct, f"{pct:.1f}%  {cur}/{total}")
-            return True
-
-        # Sometimes percent without bytes
-        m = re.search(r"(\d+(?:\.\d+)?)%", line)
-        if m and "Writing at" in line:
-            pct = float(m.group(1))
-            self._progress_set(pct, f"{pct:.1f}%")
-            return True
-
-        return False
+    def _set_firmware_path(self, p: str):
+        p = (p or "").strip()
+        self.firmware_path.set(p)
+        self.firmware_display.set(os.path.basename(p) if p else "")
+        self._schedule_save()
 
     # -----------------------------
-    # Progress UI (thread-safe) - CANVAS ONLY
+    # Progress UI (CANVAS ONLY)
     # -----------------------------
     def _draw_progress(self):
         c = self.prog_canvas
@@ -427,19 +543,20 @@ class App:
         bw = w - pad * 2
         bh = h - pad * 2
 
-        # Windows-ish colors
         border = "#bdbdbd"
         trough = "#f0f0f0"
-        fill = "#22a33a"   # green
+        fill = "#22a33a"  # green
 
-        # outer frame
         c.create_rectangle(pad, pad, pad + bw, pad + bh, outline=border, fill=trough)
 
-        # fill
         pct = max(0.0, min(100.0, float(self._prog_pct)))
         fw = int(bw * (pct / 100.0))
         if fw > 0:
             c.create_rectangle(pad + 1, pad + 1, pad + fw, pad + bh - 1, outline="", fill=fill)
+
+        # optional percent text inside bar
+        txt = f"{pct:.0f}%"
+        c.create_text(pad + bw // 2, pad + bh // 2, text=txt, font=self.touch_font, fill="#1a1a1a")
 
     def _progress_show(self, text=""):
         def ui():
@@ -465,6 +582,23 @@ class App:
             self._draw_progress()
         self.root.after(0, ui)
 
+    def _try_parse_esptool_progress(self, line: str):
+        # Writing at 0x00047e18 [=> ]   7.6% 98304/1297264 bytes...
+        m = re.search(r"(\d+(?:\.\d+)?)%\s+(\d+)\s*/\s*(\d+)\s+bytes", line)
+        if m:
+            pct = float(m.group(1))
+            cur = int(m.group(2))
+            total = int(m.group(3))
+            self._progress_set(pct, f"{pct:.1f}%  {cur}/{total}")
+            return True
+
+        m = re.search(r"(\d+(?:\.\d+)?)%", line)
+        if m and "Writing at" in line:
+            pct = float(m.group(1))
+            self._progress_set(pct, f"{pct:.1f}%")
+            return True
+
+        return False
 
     # -----------------------------
     # UI construction
@@ -476,7 +610,10 @@ class App:
             width=width,
             font=self.touch_font,
             relief="solid",
-            bd=1
+            bd=2,
+            highlightthickness=1,
+            highlightbackground="#bdbdbd",
+            highlightcolor="#4a90e2",
         )
         e.bind("<Button-1>", lambda ev: e.focus_set())
         e.bind("<FocusIn>", lambda ev, w=e: self._on_widget_focus(w))
@@ -513,9 +650,11 @@ class App:
         ttk.Button(nav, text="Next", style="Keypad.TButton", command=self._focus_next).grid(
             row=0, column=1, padx=6, pady=6, sticky="we"
         )
-        ttk.Button(nav, text="++", style="Keypad.TButton", command=self._increment_owner_number).grid(
-            row=0, column=2, padx=6, pady=6, sticky="we"
-        )
+
+        # ++ button will be shown/hidden depending on mode
+        self.inc_btn = ttk.Button(nav, text="++", style="Keypad.TButton", command=self._increment_owner_number)
+        self.inc_btn.grid(row=0, column=2, padx=6, pady=6, sticky="we")
+
         ttk.Button(nav, text="Exit", style="Keypad.TButton", command=self._exit_app).grid(
             row=1, column=0, columnspan=3, padx=6, pady=(6, 0), sticky="we"
         )
@@ -530,16 +669,14 @@ class App:
     def _build_ui(self):
         outer = ttk.Frame(self.root, padding=16)
         outer.pack(fill="both", expand=True)
-        outer.columnconfigure(0, weight=2)   # left 2/3
-        outer.columnconfigure(1, weight=1)   # right 1/3
+        outer.columnconfigure(0, weight=2)  # left 2/3
+        outer.columnconfigure(1, weight=1)  # right 1/3
         outer.rowconfigure(0, weight=1)
 
-        # Left panel
         self.left = ttk.Frame(outer)
         self.left.grid(row=0, column=0, sticky="nsew")
         self.left.columnconfigure(1, weight=1)
 
-        # Right panel (keypad)
         self.keypad = self._build_keypad(outer)
         self.keypad.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         self.keypad.configure(width=KEYPAD_WIDTH)
@@ -547,7 +684,7 @@ class App:
 
         r = 0
 
-        # Mode buttons row
+        # Mode buttons
         ttk.Label(self.left, text="Mode:", font=self.touch_font).grid(row=r, column=0, sticky="w")
 
         mode_row = ttk.Frame(self.left)
@@ -569,86 +706,109 @@ class App:
                 relief="raised",
                 bd=2,
                 command=lambda kk=key: set_mode(kk),
-                padx=12,
-                pady=12,
+                padx=14,
+                pady=14,
             )
             b.grid(row=0, column=i, padx=8, pady=4, sticky="we")
             self.mode_buttons[key] = b
 
-        # Firmware row
+        # Firmware row (display filename only)
         r += 1
         ttk.Label(self.left, text="Firmware:", font=self.touch_font).grid(row=r, column=0, sticky="w")
-        self._register_field(self.touch_entry(self.left, self.firmware_path, width=55)).grid(
-            row=r, column=1, sticky="we", padx=10
-        )
+        self.fw_entry = self._register_field(self.touch_entry(self.left, self.firmware_display, width=28))
+        self.fw_entry.grid(row=r, column=1, sticky="w", padx=10, ipady=10)
+        self.fw_entry.configure(state="readonly")
         ttk.Button(self.left, text="Browse…", command=self.pick_firmware, style="Touch.TButton", width=10).grid(
             row=r, column=2, sticky="we"
         )
 
-        # UF2 row frame (RAK only)
+        # UF2 drive row (RAK only)
         r += 1
         self.uf2_row = ttk.Frame(self.left)
-        self.uf2_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 0))
+        self.uf2_row.grid(row=r, column=0, columnspan=3, sticky="we")
         self.uf2_row.columnconfigure(1, weight=1)
 
         ttk.Label(self.uf2_row, text="UF2 Drive:", font=self.touch_font).grid(row=0, column=0, sticky="w")
-        self.drive_combo = ttk.Combobox(
-            self.uf2_row, textvariable=self.uf2_drive, values=[], font=self.touch_font, width=10
-        )
-        self.drive_combo.grid(row=0, column=1, sticky="w", padx=10)
+        self.drive_combo = ttk.Combobox(self.uf2_row, textvariable=self.uf2_drive, values=[], font=self.touch_font, width=10)
+        self.drive_combo.grid(row=0, column=1, sticky="w", padx=10, ipady=6)
         self._register_field(self.drive_combo)
         ttk.Button(self.uf2_row, text="Refresh", command=self.refresh_drives, style="Touch.TButton", width=10).grid(
             row=0, column=2, sticky="we"
         )
 
-        # Owner split
+        # Owner section: we create BOTH rows and show/hide based on mode
         r += 1
-        ttk.Label(self.left, text="Owner:", font=self.touch_font).grid(row=r, column=0, sticky="w")
-        owner_row = ttk.Frame(self.left)
-        owner_row.grid(row=r, column=1, sticky="w", padx=10)
-        self._register_field(self.touch_entry(owner_row, self.owner_letters, width=18)).pack(side="left", padx=(0, 10))
-        ttk.Label(owner_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
-        self._register_field(self.touch_entry(owner_row, self.owner_num, width=6)).pack(side="left")
 
-        ttk.Label(self.left, text="Short:", font=self.touch_font).grid(row=r, column=1, sticky="e")
-        short_row = ttk.Frame(self.left)
-        short_row.grid(row=r, column=2, sticky="w")
-        self._register_field(self.touch_entry(short_row, self.owner_short_letters, width=6)).pack(side="left", padx=(0, 10))
-        ttk.Label(short_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
-        self._register_field(self.touch_entry(short_row, self.owner_short_num, width=6)).pack(side="left")
+        self.owner_repeater_row = ttk.Frame(self.left)
+        self.owner_repeater_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 0))
+        self.owner_repeater_row.columnconfigure(1, weight=1)
+
+        ttk.Label(self.owner_repeater_row, text="Owner:", font=self.touch_font).grid(row=0, column=0, sticky="w")
+        rep_owner = ttk.Frame(self.owner_repeater_row)
+        rep_owner.grid(row=0, column=1, sticky="w", padx=10)
+
+        self._register_field(self.touch_entry(rep_owner, self.owner_letters, width=8)).pack(side="left", padx=(0, 10), ipady=10)
+        ttk.Label(rep_owner, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
+        self._register_field(self.touch_entry(rep_owner, self.owner_num, width=3)).pack(side="left", ipady=10)
+
+        ttk.Label(self.owner_repeater_row, text="Short:", font=self.touch_font).grid(row=0, column=2, sticky="w")
+        rep_short = ttk.Frame(self.owner_repeater_row)
+        rep_short.grid(row=0, column=3, sticky="w", padx=10)
+
+        self._register_field(self.touch_entry(rep_short, self.owner_short_letters, width=3)).pack(side="left", padx=(0, 10), ipady=10)
+        ttk.Label(rep_short, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
+        self._register_field(self.touch_entry(rep_short, self.owner_short_num, width=3)).pack(side="left", ipady=10)
+
+        self.owner_user_row = ttk.Frame(self.left)
+        self.owner_user_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 0))
+        self.owner_user_row.columnconfigure(1, weight=1)
+
+        ttk.Label(self.owner_user_row, text="Owner:", font=self.touch_font).grid(row=0, column=0, sticky="w")
+        self.user_owner_entry = self._register_field(self.touch_entry(self.owner_user_row, self.user_owner, width=22))
+        self.user_owner_entry.grid(row=0, column=1, sticky="w", padx=10, ipady=10)
+
+        ttk.Label(self.owner_user_row, text="Short:", font=self.touch_font).grid(row=0, column=2, sticky="w")
+        self.user_owner_short_entry = self._register_field(self.touch_entry(self.owner_user_row, self.user_owner_short, width=6))
+        self.user_owner_short_entry.grid(row=0, column=3, sticky="w", padx=10, ipady=10)
 
         # Lat/Lon
         r += 1
         self.lat_lbl = ttk.Label(self.left, text="Latitude:", font=self.touch_font)
         self.lat_lbl.grid(row=r, column=0, sticky="w")
-        self.lat_entry = self._register_field(self.touch_entry(self.left, self.lat, width=16))
-        self.lat_entry.grid(row=r, column=1, sticky="w", padx=10)
+        self.lat_entry = self._register_field(self.touch_entry(self.left, self.lat, width=12))
+        self.lat_entry.grid(row=r, column=1, sticky="w", padx=10, ipady=10)
 
-    
         self.lon_lbl = ttk.Label(self.left, text="Longitude:", font=self.touch_font)
         self.lon_lbl.grid(row=r, column=1, sticky="e")
-        self.lon_entry = self._register_field(self.touch_entry(self.left, self.lon, width=16))
-        self.lon_entry.grid(row=r, column=2, sticky="w")
+        self.lon_entry = self._register_field(self.touch_entry(self.left, self.lon, width=12))
+        self.lon_entry.grid(row=r, column=2, sticky="w", ipady=10)
+
+        # GPS Status row (below lat/lon)
+        r += 1
+        ttk.Label(self.left, text="Laptop GPS:", font=self.touch_font).grid(row=r, column=0, sticky="w")
+        self.gps_status_var = tk.StringVar(value="(starting...)")
+        self.gps_status_lbl = ttk.Label(self.left, textvariable=self.gps_status_var, font=self.touch_font)
+        self.gps_status_lbl.grid(row=r, column=1, columnspan=2, sticky="w", padx=10)
+
         # Action buttons
         r += 1
         btns = ttk.Frame(self.left)
         btns.grid(row=r, column=0, columnspan=3, sticky="we", pady=(12, 8))
 
         self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=8)
-        self.flash_btn.pack(side="left", padx=5, pady=6)
+        self.flash_btn.pack(side="left", padx=6, pady=6)
 
         self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=10)
-        self.configure_btn.pack(side="left", padx=5, pady=6)
+        self.configure_btn.pack(side="left", padx=6, pady=6)
 
-        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=10)
-        self.erase_btn.pack(side="left", padx=5, pady=6)  # will be hidden for RAK in apply_mode
-
-        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=8)
-        self.clear_btn.pack(side="left", padx=5, pady=6)
+        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=12)
+        self.erase_btn.pack(side="left", padx=6, pady=6)
 
         self.set_gps_btn = ttk.Button(btns, text="Set GPS", command=self.set_gps, style="Touch.TButton", width=8)
-        self.set_gps_btn.pack(side="left", padx=5, pady=6)
-    
+        self.set_gps_btn.pack(side="left", padx=6, pady=6)
+
+        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=8)
+        self.clear_btn.pack(side="left", padx=6, pady=6)
 
         # Progress row
         r += 1
@@ -656,39 +816,37 @@ class App:
         self.prog_row.grid(row=r, column=0, columnspan=3, sticky="we", pady=(0, 8))
         self.prog_row.columnconfigure(0, weight=1)
 
-        # Canvas progress bar (green, Windows-ish)
-        self.prog_canvas = tk.Canvas(self.prog_row, height=26, highlightthickness=0)
+        self.prog_canvas = tk.Canvas(self.prog_row, height=34, highlightthickness=0)
         self.prog_canvas.grid(row=0, column=0, sticky="we", padx=(0, 10))
 
         self.prog_lbl = ttk.Label(self.prog_row, text="", font=self.touch_font)
         self.prog_lbl.grid(row=0, column=1, sticky="e")
 
-        # internal progress state
         self._prog_pct = 0.0
-        self._prog_phase = "Idle"
-
-        # draw once and redraw on resize
         self.prog_canvas.bind("<Configure>", lambda e: self._draw_progress())
-
-
-        self.prog_row.grid_remove()  # hidden by default
+        self.prog_row.grid_remove()
 
         # Log
         r += 1
-        self.log = tk.Text(self.left, height=18, wrap="word", font=self.log_font)
+        self.log = tk.Text(self.left, height=16, wrap="word", font=self.log_font)
         self.log.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
         self.left.rowconfigure(r, weight=1)
 
-        # make rows breathe
         for i in range(r):
             self.left.rowconfigure(i, pad=10)
 
     def _wire_traces(self):
         for v in [
-            self.firmware_path, self.uf2_drive,
+            self.mode,
+            self.firmware_path,
+            self.uf2_drive,
+
             self.owner_letters, self.owner_num,
             self.owner_short_letters, self.owner_short_num,
-            self.lat, self.lon
+
+            self.user_owner, self.user_owner_short,
+
+            self.lat, self.lon,
         ]:
             v.trace_add("write", lambda *_: self._schedule_save())
 
@@ -720,30 +878,54 @@ class App:
         if mode not in MODE_DEFS:
             return
         d = MODE_DEFS[mode]
-
         self._update_mode_button_styles()
 
         saved = (self._state.get("modes") or {}).get(mode, {})
 
-        self.firmware_path.set(saved.get("firmware_path") or d["firmware_default"])
+        # firmware
+        fw_saved = saved.get("firmware_path") or d["firmware_default"]
+        fw_saved = resolve_firmware_path(fw_saved)
+        self._set_firmware_path(fw_saved)
+
+        # uf2 drive
         self.uf2_drive.set(saved.get("uf2_drive") or "")
 
+        # owner fields
         self.owner_letters.set(saved.get("owner_letters") or self.owner_letters.get())
-        self.owner_num.set(saved.get("owner_num") or self.owner_num.get())
+        self.owner_num.set((saved.get("owner_num") or self.owner_num.get()).zfill(2)[:2])
         self.owner_short_letters.set(saved.get("owner_short_letters") or self.owner_short_letters.get())
-        self.owner_short_num.set(saved.get("owner_short_num") or self.owner_short_num.get())
+        self.owner_short_num.set((saved.get("owner_short_num") or self.owner_short_num.get()).zfill(2)[:2])
 
+        self.user_owner.set(saved.get("user_owner") or self.user_owner.get())
+        self.user_owner_short.set(saved.get("user_owner_short") or self.user_owner_short.get())
+
+        # lat/lon
         self.lat.set(saved.get("lat") or self.lat.get())
         self.lon.set(saved.get("lon") or self.lon.get())
 
-        # UF2 drive row only for RAK
+        # UF2 row only for RAK
         if d["flash_method"] == "uf2_drive":
             self.uf2_row.grid()
             self.refresh_drives()
         else:
             self.uf2_row.grid_remove()
 
-        # gps behavior
+        # owner mode show/hide + keypad ++ show/hide
+        if d["owner_mode"] == "repeater":
+            self.owner_user_row.grid_remove()
+            self.owner_repeater_row.grid()
+            self.inc_btn.state(["!disabled"])
+            self.inc_btn.grid()  # ensure visible
+        else:
+            self.owner_repeater_row.grid_remove()
+            self.owner_user_row.grid()
+            # hide ++ for user devices
+            try:
+                self.inc_btn.grid_remove()
+            except Exception:
+                pass
+
+        # gps behavior for device
         if d["gps_mode"] == "fixed":
             self.lat_entry.configure(state="normal")
             self.lon_entry.configure(state="normal")
@@ -751,44 +933,122 @@ class App:
             self.lat_entry.configure(state="disabled")
             self.lon_entry.configure(state="disabled")
 
-        # Erase only for Heltecs
+        # Erase only for Heltecs (esptool)
         if d["flash_method"] == "esptool":
             if not self.erase_btn.winfo_ismapped():
-                self.erase_btn.pack(side="left", padx=10, pady=6)
+                self.erase_btn.pack(side="left", padx=6, pady=6)
         else:
             if self.erase_btn.winfo_ismapped():
                 self.erase_btn.pack_forget()
 
+        # Set GPS button: only meaningful when mode needs fixed coords (RAK)
+        if d["gps_mode"] == "fixed":
+            # enabled only when laptop has fix; handled in gps tick as well
+            pass
+        else:
+            self.set_gps_btn.state(["disabled"])
+
         self._schedule_save()
 
     # -----------------------------
-    # Validation + Meshtastic config
+    # GPS UI tick
+    # -----------------------------
+    def _tick_gps_ui(self):
+        st = self.gps_status
+
+        if serial is None:
+            msg = "pyserial not installed (GPS disabled)"
+            self.gps_status_var.set(msg)
+            self.gps_status_lbl.configure(foreground="#777777")
+            self.set_gps_btn.state(["disabled"])
+        elif st.error:
+            self.gps_status_var.set(f"{GPS_COM_PORT}: {st.error}")
+            self.gps_status_lbl.configure(foreground="#b00020")
+            self.set_gps_btn.state(["disabled"])
+        else:
+            if st.last_update == 0:
+                self.gps_status_var.set(f"{GPS_COM_PORT}: waiting for NMEA…")
+                self.gps_status_lbl.configure(foreground="#777777")
+                self.set_gps_btn.state(["disabled"])
+            else:
+                age = time.time() - st.last_update
+                if st.has_fix:
+                    hd = f"{st.hdop:.1f}" if st.hdop is not None else "?"
+                    lat = f"{st.lat:.6f}" if st.lat is not None else "?"
+                    lon = f"{st.lon:.6f}" if st.lon is not None else "?"
+                    self.gps_status_var.set(f"FIX  sats={st.sats}  hdop={hd}  ({lat}, {lon})  age={age:.0f}s")
+                    self.gps_status_lbl.configure(foreground="#1b5e20")
+                else:
+                    hd = f"{st.hdop:.1f}" if st.hdop is not None else "?"
+                    self.gps_status_var.set(f"NO FIX  sats={st.sats}  hdop={hd}  age={age:.0f}s")
+                    self.gps_status_lbl.configure(foreground="#777777")
+
+                # enable/disable Set GPS based on current mode + fix
+                mode = self.mode.get()
+                if mode in MODE_DEFS and MODE_DEFS[mode]["gps_mode"] == "fixed" and st.has_fix:
+                    self.set_gps_btn.state(["!disabled"])
+                else:
+                    self.set_gps_btn.state(["disabled"])
+
+        self.root.after(500, self._tick_gps_ui)
+
+    def set_gps(self):
+        # Only for RAK fixed mode and only when fix is present (button disabled otherwise)
+        st = self.gps_status
+        if not st.has_fix or st.lat is None or st.lon is None:
+            return
+        self.lat.set(f"{st.lat:.6f}")
+        self.lon.set(f"{st.lon:.6f}")
+        self.log_write(f"Set fixed position from laptop GPS: {st.lat:.6f}, {st.lon:.6f}\n")
+
+    # -----------------------------
+    # Owner building + validation
     # -----------------------------
     def _build_owner_strings(self):
-        owner = f"{self.owner_letters.get().strip()}{self.owner_num.get().strip()}"
-        owner_short = f"{self.owner_short_letters.get().strip()}{self.owner_short_num.get().strip()}"
+        mode = self.mode.get()
+        d = MODE_DEFS[mode]
+
+        if d["owner_mode"] == "repeater":
+            letters = self.owner_letters.get().strip()
+            num = self.owner_num.get().strip().zfill(2)[:2]
+            short_letters = self.owner_short_letters.get().strip()
+            short_num = self.owner_short_num.get().strip().zfill(2)[:2]
+            owner = f"{letters}{num}"
+            owner_short = f"{short_letters}{short_num}"
+            return owner, owner_short
+
+        # user mode
+        owner = self.user_owner.get().strip()
+        owner_short = self.user_owner_short.get().strip()
         return owner, owner_short
 
     def _validate_common(self):
         mode = self.mode.get()
         d = MODE_DEFS[mode]
 
-        fw = self.firmware_path.get().strip()
-        if not fw or not os.path.isfile(fw):
+        fw_full = resolve_firmware_path(self.firmware_path.get())
+        if not fw_full or not os.path.isfile(fw_full):
             raise RuntimeError("Firmware file not set or not found.")
+        # store resolved for later
+        self.firmware_path.set(fw_full)
+        self.firmware_display.set(os.path.basename(fw_full))
 
         if d["flash_method"] == "uf2_drive":
             if not self.uf2_drive.get().strip():
                 raise RuntimeError("Select/detect the UF2 drive.")
 
-        if not self.owner_letters.get().strip():
-            raise RuntimeError("Owner letters required.")
-        if not self.owner_num.get().strip().isdigit():
-            raise RuntimeError("Owner number must be digits (e.g. 01).")
-        if not self.owner_short_letters.get().strip():
-            raise RuntimeError("Owner short letters required.")
-        if not self.owner_short_num.get().strip().isdigit():
-            raise RuntimeError("Owner short number must be digits (e.g. 01).")
+        owner, owner_short = self._build_owner_strings()
+        if not owner:
+            raise RuntimeError("Owner required.")
+        if not owner_short:
+            raise RuntimeError("Owner short required.")
+
+        if d["owner_mode"] == "repeater":
+            # require 2-digit numbers
+            if not self.owner_num.get().strip().isdigit() or len(self.owner_num.get().strip()) > 2:
+                raise RuntimeError("Owner number must be 2 digits (e.g. 01).")
+            if not self.owner_short_num.get().strip().isdigit() or len(self.owner_short_num.get().strip()) > 2:
+                raise RuntimeError("Owner short number must be 2 digits (e.g. 01).")
 
         if d["gps_mode"] == "fixed":
             try:
@@ -797,6 +1057,9 @@ class App:
             except ValueError:
                 raise RuntimeError("Latitude/Longitude must be valid numbers for fixed position mode.")
 
+    # -----------------------------
+    # Meshtastic config
+    # -----------------------------
     def _meshtastic_config_cmd(self):
         mode = self.mode.get()
         d = MODE_DEFS[mode]
@@ -828,12 +1091,12 @@ class App:
         return cmd
 
     # -----------------------------
-    # Flashing implementations
+    # Flash / Erase / Configure
     # -----------------------------
     def _do_flash(self):
         mode = self.mode.get()
         d = MODE_DEFS[mode]
-        fw = self.firmware_path.get().strip()
+        fw = resolve_firmware_path(self.firmware_path.get().strip())
 
         if d["flash_method"] == "uf2_drive":
             self.log_write("Flashing (UF2 copy)...\n")
@@ -842,7 +1105,7 @@ class App:
             self.log_write("Flash done.\n")
             return
 
-        # Heltec: esptool write-flash with canvas progress bar
+        # Heltec: esptool write-flash + canvas progress
         self._progress_show("Flashing…")
         try:
             self.log_write("Flashing (esptool)...\n")
@@ -852,12 +1115,6 @@ class App:
             self.log_write("Flash done.\n")
         finally:
             self._progress_hide()
-
-
-    def _do_configure(self):
-        self.log_write("Configuring via Meshtastic CLI...\n")
-        run_cmd_stream(self._meshtastic_config_cmd(), self.log_write)
-        self.log_write("Configuration complete.\n")
 
     def _do_erase(self):
         self._progress_show("Erasing…")
@@ -869,6 +1126,12 @@ class App:
         finally:
             self._progress_hide()
 
+    def _do_configure(self):
+        # If configuring RAK and you want to auto-fill lat/lon from laptop GPS *only when fix exists*,
+        # you already have Set GPS button. Keeping configure deterministic (uses whatever is in fields).
+        self.log_write("Configuring via Meshtastic CLI...\n")
+        run_cmd_stream(self._meshtastic_config_cmd(), self.log_write)
+        self.log_write("Configuration complete.\n")
 
     # -----------------------------
     # Buttons (threaded)
@@ -901,8 +1164,6 @@ class App:
                 mode = self.mode.get()
                 if MODE_DEFS[mode]["flash_method"] != "esptool":
                     raise RuntimeError("Erase is only available for Heltec modes.")
-                # For erase, firmware isn't actually required, but keeping your validation consistent is fine.
-                self._validate_common()
                 self.log_write(f"Mode: {MODE_DEFS[self.mode.get()]['label']}\n")
                 self._do_erase()
             except Exception as e:
@@ -916,7 +1177,7 @@ class App:
     def pick_firmware(self):
         p = filedialog.askopenfilename(filetypes=[("Firmware", "*.*"), ("All files", "*.*")])
         if p:
-            self.firmware_path.set(p)
+            self._set_firmware_path(p)
 
     def refresh_drives(self):
         drives = detect_uf2_drives()
@@ -934,13 +1195,20 @@ class App:
 
     def clear_log(self):
         self.log.delete("1.0", "end")
-    
-    def set_gps(self):
-        self.log_write("Setting GPS from current position...\n")
 
     def _exit_app(self):
-        self._save_state()
-        self.root.destroy()
+        try:
+            self._save_state()
+        except Exception:
+            pass
+        try:
+            self._gps_stop.set()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
 
 def main():
