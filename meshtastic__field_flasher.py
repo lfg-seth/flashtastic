@@ -169,9 +169,9 @@ class App:
         self.root = root
 
         # Fonts
-        self.touch_font = font.Font(family="Segoe UI", size=32)
-        self.touch_font_bold = font.Font(family="Segoe UI", size=32, weight="bold")
-        self.log_font = font.Font(family="Consolas", size=24)
+        self.touch_font = font.Font(family="Segoe UI", size=24)
+        self.touch_font_bold = font.Font(family="Segoe UI", size=24, weight="bold")
+        self.log_font = font.Font(family="Consolas", size=16)
 
         # Mode button colors
         self.mode_bg_normal = "#2b2b2b"
