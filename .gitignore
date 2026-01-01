@@ -1,9 +1,4 @@
-#firmware
-*.bin
-*.elf
-*.hex
-*.dfu
-*.uf2
+
 
 
 # Byte-compiled / optimized / DLL files
