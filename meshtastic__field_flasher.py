@@ -23,6 +23,7 @@ except Exception:
 # -----------------------------
 SETURL_VALUE = r"https://meshtastic.org/e/#CjESIIBUPqT60FhSuxvl2JP2kE7uVHX5ygCrMJ8y8pLb5vXOGgVTTk9SUigBMAE6AgggEhgIARj6ASALKAU4AUAFSAFQHlgjaAHIBgE"
 
+MESHTASTIC_CONFIG_STRING = "meshtastic_config.txt"
 APP_DIR = Path(__file__).parent.resolve()
 STATE_PATH = APP_DIR / "state.json"
 
@@ -1096,7 +1097,7 @@ class App:
             "--set-owner", owner,
             "--set-owner-short", owner_short,
 
-            "--set", "neighbor_info.update_interval", "120",
+            "--set", "neighbor_info.update_interval", "600",
             "--set", "neighbor_info.transmit_over_lora", "true",
             "--set", "neighbor_info.enabled", "true",
 
@@ -1113,6 +1114,32 @@ class App:
             ]
         else:
             cmd += ["--set", "position.fixed_position", "false"]
+
+        if d["role"] == "CLIENT":
+            cmd += [
+                "--set", "mqtt.enabled", "true",
+                "--set", "mqtt.server", "mqtt.spp.lol",
+                "--set", "mqtt.username", "MC01",
+                "--set", "mqtt.password", "snorr702"
+                "--set", "mqtt.proxy_to_client_enabled", "true",
+                "--set", "mqtt.map_reporting_enabled", "true",
+                "--set", "mqtt.encryption_enabled", "true",
+                "--set", "mqtt.tls_enabled", "true",
+                "--set", "mqtt.root", "/msh/SNORR",
+
+                "--ch-set", "uplink_enabled", "true", "--ch-index", "0",
+                "--ch-set", "downlink_enabled", "true", "--ch-index", "0",
+                "--ch-set", "module_settings.position_precision", "32", "--ch-index", "0",
+
+                "--set", "position.broadcast_smart_minimum_distance", "10",
+                "--set", "position.broadcast_smart_minimum_interval_secs", "600",
+            ]
+        if d["gps_mode"] == "gps":
+            cmd += [
+                "--set", "position.rx_gpio", "39",
+                "--set", "position.tx_gpio", "38",
+                "--set", "position.gps_mode", "ENABLED",
+            ]
 
         return cmd
 
