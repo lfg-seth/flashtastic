@@ -610,10 +610,9 @@ class App:
         ttk.Label(owner_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
         self._register_field(self.touch_entry(owner_row, self.owner_num, width=6)).pack(side="left")
 
-        r += 1
-        ttk.Label(self.left, text="Owner Short:", font=self.touch_font).grid(row=r, column=0, sticky="e")
+        ttk.Label(self.left, text="Short:", font=self.touch_font).grid(row=r, column=1, sticky="e")
         short_row = ttk.Frame(self.left)
-        short_row.grid(row=r, column=1, sticky="w")
+        short_row.grid(row=r, column=2, sticky="w")
         self._register_field(self.touch_entry(short_row, self.owner_short_letters, width=6)).pack(side="left", padx=(0, 10))
         ttk.Label(short_row, text="#", font=self.touch_font).pack(side="left", padx=(0, 6))
         self._register_field(self.touch_entry(short_row, self.owner_short_num, width=6)).pack(side="left")
@@ -625,30 +624,30 @@ class App:
         self.lat_entry = self._register_field(self.touch_entry(self.left, self.lat, width=16))
         self.lat_entry.grid(row=r, column=1, sticky="w", padx=10)
 
-        r += 1
+    
         self.lon_lbl = ttk.Label(self.left, text="Longitude:", font=self.touch_font)
-        self.lon_lbl.grid(row=r, column=0, sticky="w")
+        self.lon_lbl.grid(row=r, column=1, sticky="e")
         self.lon_entry = self._register_field(self.touch_entry(self.left, self.lon, width=16))
-        self.lon_entry.grid(row=r, column=1, sticky="w")
+        self.lon_entry.grid(row=r, column=2, sticky="w")
         # Action buttons
         r += 1
         btns = ttk.Frame(self.left)
         btns.grid(row=r, column=0, columnspan=3, sticky="we", pady=(12, 8))
 
-        self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=10)
-        self.flash_btn.pack(side="left", padx=10, pady=6)
+        self.flash_btn = ttk.Button(btns, text="Flash", command=self.flash_only, style="Touch.TButton", width=8)
+        self.flash_btn.pack(side="left", padx=5, pady=6)
 
         self.configure_btn = ttk.Button(btns, text="Configure", command=self.configure_only, style="Touch.TButton", width=10)
-        self.configure_btn.pack(side="left", padx=10, pady=6)
+        self.configure_btn.pack(side="left", padx=5, pady=6)
 
-        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=12)
-        self.erase_btn.pack(side="left", padx=10, pady=6)  # will be hidden for RAK in apply_mode
+        self.erase_btn = ttk.Button(btns, text="Erase Flash", command=self.erase_flash, style="Touch.TButton", width=10)
+        self.erase_btn.pack(side="left", padx=5, pady=6)  # will be hidden for RAK in apply_mode
 
-        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=10)
-        self.clear_btn.pack(side="left", padx=10, pady=6)
+        self.clear_btn = ttk.Button(btns, text="Clear Log", command=self.clear_log, style="Touch.TButton", width=8)
+        self.clear_btn.pack(side="left", padx=5, pady=6)
 
-        self.set_gps_btn = ttk.Button(btns, text="Set GPS", command=self.set_gps, style="Touch.TButton", width=10)
-        self.set_gps_btn.pack(side="left", padx=10, pady=6)
+        self.set_gps_btn = ttk.Button(btns, text="Set GPS", command=self.set_gps, style="Touch.TButton", width=8)
+        self.set_gps_btn.pack(side="left", padx=5, pady=6)
     
 
         # Progress row
