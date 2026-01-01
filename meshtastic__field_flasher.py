@@ -1162,7 +1162,7 @@ class App:
         self._progress_show("Flashing…")
         try:
             self.log_write("Flashing (esptool)...\n")
-            cmd = ["esptool", "--baud", "921600", "write-flash", "0x00", fw]
+            cmd = ["esptool", "--baud", "115200", "write-flash", "0x00", fw]
             run_cmd_stream(cmd, self.log_write, line_cb=self._try_parse_esptool_progress)
             self._progress_set(100.0, "Done")
             self.log_write("Flash done.\n")
